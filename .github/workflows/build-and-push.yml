@@ -55,57 +55,39 @@ jobs:
           echo "GITHUB_HEAD_REF: $GITHUB_HEAD_REF"
 
           changed_directories=""
+
           if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
-            # For PRs, compare with the target branch (usually main)
-            # Make sure the base branch is correctly retrieved
-            git fetch origin ${{ github.base_ref }}:${{ github.base_ref }} --depth=1
-            # Get the list of directories that contain modified files
-            changed_directories=$(git diff --name-only --diff-filter=AMR ${{ github.base_ref }} ${{ github.sha }} | sed -n 's|^environments/\([^/]*\)/\([^/]*\)/.*|\environments/\1/\2|p' | uniq || true)
+            # Ensure base branch is fetched
+            git fetch origin $GITHUB_BASE_REF:$GITHUB_BASE_REF --depth=1 || true
+  
+            # Check for modified directories
+            changed_directories=$(git diff --name-only --diff-filter=AMR $GITHUB_BASE_REF $GITHUB_HEAD_REF | grep '^environments/' | awk -F'/' '{print $1"/"$2"/"$3}' | uniq) || true
           elif [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/main" ]]; then
-            # For pushes to main, get the files modified in the push
-            # If it's the first push or if the history is shallow, this might not be ideal.
-            # An alternative is to rebuild everything on main, or compare with the last successful commit.
-            # For now, we use the files modified in the push.
-            # If GITHUB_BEFORE is 0000...0000 (new branch), build everything.
-            if [[ "${{ github.event.before }}" == "0000000000000000000000000000000000000000" ]]; then
-                echo "New branch or first push, searching for all environment directories."
-                changed_directories=$(find environments -type d -maxdepth 2 | grep '^environments/[^/]*/[^/]*$' || true)
+            # Handle new branches or first pushes
+            if [[ "$GITHUB_EVENT_BEFORE" == "0000000000000000000000000000000000000000" ]]; then
+              echo "New branch or first push. Searching for all environment directories."
+              changed_directories=$(find environments -type d -maxdepth 2 | grep '^environments/[^/]*/[^/]*$') || true
             else
-                # Get the list of directories that contain modified files
-                changed_directories=$(git diff --name-only --diff-filter=AMR ${{ github.event.before }} ${{ github.sha }} | sed -n 's|^environments/\([^/]*\)/\([^/]*\)/.*|\environments/\1/\2|p' | uniq || true)
+              # Check for modified directories
+              git fetch origin --unshallow || true
+              changed_directories=$(git diff --name-only --diff-filter=AMR $GITHUB_EVENT_BEFORE $GITHUB_SHA | grep '^environments/' | awk -F'/' '{print $1"/"$2"/"$3}' | uniq) || true
             fi
           else
-            echo "Unsupported event for specific change identification. Searching for all environment directories."
-            changed_directories=$(find environments -type d -maxdepth 2 | grep '^environments/[^/]*/[^/]*$' || true)
+            echo "Unsupported event type. Searching for all environment directories."
+            changed_directories=$(find environments -type d -maxdepth 2 | grep '^environments/[^/]*/[^/]*$') || true
           fi
 
           if [[ -z "$changed_directories" ]]; then
             echo "No modified environment directories found."
             echo "changed_recipes_json=[]" >> $GITHUB_OUTPUT
-            exit 0 # Successful exit if no files are modified
+            exit 0
           fi
 
           echo "Modified environment directories:"
           echo "$changed_directories"
-          
-          # Convert the list of directories into a JSON array for the strategy matrix
-          json_array="["
-          first=true
-          # Use a different approach to iterate over the directories
-          IFS=$'\n' read -r -d '' -a directories <<< "$changed_directories"
-          for directory in "${directories[@]}"; do
-            if [ -n "$directory" ]; then # Ignore empty lines
-              if [ "$first" = true ]; then
-                first=false
-              else
-                  json_array="$json_array,"
-              fi
-              json_array="$json_array\"$directory\""
-            fi
-          done
-          json_array="$json_array]"
-          
-          echo "JSON array of modified recipes: $json_array"
+
+          # Convert list into JSON array
+          json_array=$(echo "$changed_directories" | jq -R -s 'split("\n") | map(select(. != ""))')
           echo "changed_recipes_json=$json_array" >> $GITHUB_OUTPUT
 
 
