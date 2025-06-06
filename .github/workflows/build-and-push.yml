@@ -25,11 +25,10 @@ jobs:
     strategy:
       fail-fast: false # Continue other builds even if one fails (for PRs)
       matrix:
-        recipe_path: [] # Will be filled dynamically
+        recipe_path: ["environments/placeholder/placeholder"] # Will be filled dynamically
 
     outputs:
       changed_recipes_json: ${{ steps.identify-changes.outputs.changed_recipes_json }}
-      all_recipes_json: ${{ steps.list-all-recipes.outputs.all_recipes_json }} # For updating pages
 
     steps:
       - name: Checkout code
