@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - 'environments/**/**' 
+      - 'environments/**/**'
       - '.github/workflows/build-and-push.yml'
   pull_request:
     branches:
@@ -22,11 +22,6 @@ permissions:
 jobs:
   build-and-validate-recipes:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false # Continue other builds even if one fails (for PRs)
-      matrix:
-        recipe_path: ["environments/placeholder/placeholder"] # Will be filled dynamically
-
     outputs:
       changed_recipes_json: ${{ steps.identify-changes.outputs.changed_recipes_json }}
 
@@ -34,71 +29,90 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Required for git diff
+          fetch-depth: 0 # Required for git diff to compare across full history
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
+      - name: Install jq (for JSON processing)
+        run: sudo apt-get update && sudo apt-get install -y jq
+
       - name: Install Dockerfile Linter (hadolint)
         run: |
           sudo wget -O /usr/local/bin/hadolint https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64
           sudo chmod +x /usr/local/bin/hadolint
 
-      - name: Identify changed recipes (for PRs and main push)
+      - name: Identify changed recipes
         id: identify-changes
         run: |
-          set -e # Exit immediately if a command fails
-          echo "GITHUB_EVENT_NAME: $GITHUB_EVENT_NAME"
-          echo "GITHUB_BASE_REF: $GITHUB_BASE_REF"
-          echo "GITHUB_HEAD_REF: $GITHUB_HEAD_REF"
+          set -e # Exit immediately if a command fails, but be mindful of commands that can "fail" meaningfully (like grep not finding matches)
+          echo "GITHUB_EVENT_NAME: ${{ github.event_name }}"
+          echo "GITHUB_REF: ${{ github.ref }}"
+          echo "GITHUB_SHA: ${{ github.sha }}"
+          echo "GITHUB_BASE_REF: ${{ github.base_ref }}" # Populated for PRs
+          echo "GITHUB_HEAD_REF: ${{ github.head_ref }}" # Populated for PRs
+          echo "GITHUB_EVENT_BEFORE: ${{ github.event.before }}" # Populated for pushes
 
-          changed_directories=""
+          changed_recipe_dirs_string=""
+          raw_diff_files=""
 
-          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
-            # Ensure base branch is fetched
-            git fetch origin $GITHUB_BASE_REF:$GITHUB_BASE_REF --depth=1 || true
-  
-            # Check for modified directories
-            changed_directories=$(git diff --name-only --diff-filter=AMR $GITHUB_BASE_REF $GITHUB_HEAD_REF | grep '^environments/' | awk -F'/' '{print $1"/"$2"/"$3}' | uniq) || true
-          elif [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/main" ]]; then
-            # Handle new branches or first pushes
-            if [[ "$GITHUB_EVENT_BEFORE" == "0000000000000000000000000000000000000000" ]]; then
-              echo "New branch or first push. Searching for all environment directories."
-              changed_directories=$(find environments -type d -maxdepth 2 | grep '^environments/[^/]*/[^/]*$' || true)
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "Identifying changes for PR between ${{ github.base_ref }} and ${{ github.head_ref }}"
+            # Ensure base branch is fetched if needed (fetch-depth: 0 should make it available)
+            # git fetch origin ${{ github.base_ref }}:${{ github.base_ref }} --depth=1 # Usually not needed with fetch-depth:0
+            
+            raw_diff_files=$(git diff --name-only --diff-filter=AMR "origin/${{ github.base_ref }}" "${{ github.sha }}")
+            if [ $? -ne 0 ]; then
+                echo "::warning::git diff for PR failed. Raw diff files might be inaccurate."
+            fi
+            echo "Raw diff files for PR:"
+            echo "${raw_diff_files}"
+            
+            if [[ -n "$raw_diff_files" ]]; then
+              changed_recipe_dirs_string=$(echo "${raw_diff_files}" | grep '^environments/' | awk -F'/' '{print $1"/"$2"/"$3}' | sort -u)
+            fi
+
+          elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+            if [[ "${{ github.event.before }}" == "0000000000000000000000000000000000000000" ]]; then
+              echo "New branch or first push to main. Identifying all environment directories."
+              changed_recipe_dirs_string=$(find environments -mindepth 2 -maxdepth 2 -type d -print | sort -u)
             else
-              # Check for modified directories
-              changed_directories=$(git diff --name-only --diff-filter=AMR $GITHUB_EVENT_BEFORE $GITHUB_SHA | grep '^environments/' | awk -F'/' '{print $1"/"$2"/"$3}' | uniq) || true
+              echo "Identifying changes for push to main between ${{ github.event.before }} and ${{ github.sha }}"
+              raw_diff_files=$(git diff --name-only --diff-filter=AMR "${{ github.event.before }}" "${{ github.sha }}")
+              if [ $? -ne 0 ]; then
+                  echo "::warning::git diff for push failed. Raw diff files might be inaccurate."
+              fi
+              echo "Raw diff files for push:"
+              echo "${raw_diff_files}"
+
+              if [[ -n "$raw_diff_files" ]]; then
+                changed_recipe_dirs_string=$(echo "${raw_diff_files}" | grep '^environments/' | awk -F'/' '{print $1"/"$2"/"$3}' | sort -u)
+              fi
             fi
           else
-            echo "Unsupported event type. Searching for all environment directories."
-            changed_directories=$(find environments -type d -maxdepth 2 | grep '^environments/[^/]*/[^/]*$' || true)
+            echo "Unsupported event ('${{ github.event_name }}' on ref '${{ github.ref }}'). Building all recipes."
+            changed_recipe_dirs_string=$(find environments -mindepth 2 -maxdepth 2 -type d -print | sort -u)
           fi
 
-          if [[ -z "$changed_directories" ]]; then
-            echo "No modified environment directories found."
+          if [[ -z "$changed_recipe_dirs_string" ]]; then
+            echo "No modified or all environment directories identified for processing."
             echo "changed_recipes_json=[]" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          echo "Modified environment directories:"
-          echo "$changed_directories"
+          echo "Identified recipe version directories to process:"
+          echo "$changed_recipe_dirs_string"
 
-          # Convert list into JSON array
-          json_array=$(echo "$changed_directories" | jq -R -s 'split("\n") | map(select(. != ""))')
+          # Convert newline-separated string of directories into a JSON array
+          json_array=$(echo "$changed_recipe_dirs_string" | jq --raw-input --slurp 'split("\n") | map(select(length > 0))')
+          
+          echo "Final JSON array of recipe paths: $json_array"
           echo "changed_recipes_json=$json_array" >> $GITHUB_OUTPUT
 
-
-      - name: Dynamically set matrix for changed recipes
-        if: steps.identify-changes.outputs.changed_recipes_json != '[]' && steps.identify-changes.outputs.changed_recipes_json != ''
-        run: |
-          echo "matrix_recipes=${{ steps.identify-changes.outputs.changed_recipes_json }}" >> $GITHUB_ENV
-
-    # This job will run for each modified recipe
-    # It is separated to allow parallelization and better logging per recipe
   process-recipe:
-    needs: build-and-validate-recipes # Ensure that change identification is complete
+    needs: build-and-validate-recipes
     if: needs.build-and-validate-recipes.outputs.changed_recipes_json != '[]' && needs.build-and-validate-recipes.outputs.changed_recipes_json != ''
     runs-on: ubuntu-latest
     strategy:
@@ -114,8 +128,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-
+      
       - name: Install Dockerfile Linter (hadolint)
+        # This step is repeated from the previous job, consider making hadolint available globally or using a composite action if used often.
         run: |
           sudo wget -O /usr/local/bin/hadolint https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64
           sudo chmod +x /usr/local/bin/hadolint
@@ -127,35 +142,44 @@ jobs:
         id: extract-name-version
         run: |
           recipe_full_path="${{ matrix.recipe_path }}" # ex: environments/recipe-name/version
+          echo "Processing recipe_path: $recipe_full_path"
           recipe_version_dir_name=$(basename "$recipe_full_path")
           recipe_name_dir=$(dirname "$recipe_full_path")
           recipe_name=$(basename "$recipe_name_dir")
+          dockerfile_actual_path="${{ matrix.recipe_path }}/Dockerfile"
+
           echo "recipe_name=$recipe_name" >> $GITHUB_OUTPUT
           echo "recipe_version=$recipe_version_dir_name" >> $GITHUB_OUTPUT
-          echo "dockerfile_path=${{ matrix.recipe_path }}/Dockerfile" >> $GITHUB_OUTPUT 
-          echo "Recipe Name: $recipe_name, Version: $recipe_version_dir_name, Dockerfile: ${{ matrix.recipe_path }}/Dockerfile"
+          echo "dockerfile_path=$dockerfile_actual_path" >> $GITHUB_OUTPUT 
+          echo "Recipe Name: $recipe_name, Version: $recipe_version_dir_name, Dockerfile: $dockerfile_actual_path"
 
       - name: Lint Dockerfile
         run: |
           echo "Linting Dockerfile: ${{ steps.extract-name-version.outputs.dockerfile_path }}"
+          if [ ! -f "${{ steps.extract-name-version.outputs.dockerfile_path }}" ]; then
+            echo "::error::Dockerfile not found at ${{ steps.extract-name-version.outputs.dockerfile_path }}"
+            exit 1
+          fi
           hadolint "${{ steps.extract-name-version.outputs.dockerfile_path }}"
 
       - name: Extract and Validate Metadata
         id: metadata
         run: |
           echo "Extracting and validating metadata for ${{ steps.extract-name-version.outputs.dockerfile_path }}"
-          # Create a temporary directory for the JSON output if needed
           mkdir -p temp_metadata
-          python scripts/extract_metadata.py "${{ steps.extract-name-version.outputs.dockerfile_path }}" "temp_metadata/${{ steps.extract-name-version.outputs.recipe_name }}-${{ steps.extract-name-version.outputs.recipe_version }}.json"
-          # Expose the JSON content as output for later use if needed
-          # For now, the script will fail if validation fails.
-          # You might want to capture the JSON here to use in build steps.
-          # For example, to read build-args.
-          metadata_json_content=$(cat "temp_metadata/${{ steps.extract-name-version.outputs.recipe_name }}-${{ steps.extract-name-version.outputs.recipe_version }}.json")
+          # Assuming extract_metadata.py can handle being called this way and outputs JSON
+          # and that it exits non-zero on validation failure.
+          python_script_path="scripts/extract_metadata.py" # Make sure this path is correct from repo root
+          output_json_file="temp_metadata/${{ steps.extract-name-version.outputs.recipe_name }}-${{ steps.extract-name-version.outputs.recipe_version }}.json"
+          
+          python "$python_script_path" "${{ steps.extract-name-version.outputs.dockerfile_path }}" "$output_json_file"
+          
+          metadata_json_content=$(cat "$output_json_file")
           echo "metadata_json<<EOF" >> $GITHUB_OUTPUT
           echo "$metadata_json_content" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
-
+          echo "Metadata JSON content:"
+          echo "$metadata_json_content"
 
       - name: Login to GitHub Container Registry
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -167,47 +191,61 @@ jobs:
 
       - name: Build Docker Image
         id: build-image
-        # Always build for PRs (to verify that it builds) and for pushes to main
-        # The push will only happen for main
         run: |
           DOCKERFILE_PATH="${{ steps.extract-name-version.outputs.dockerfile_path }}"
           RECIPE_NAME="${{ steps.extract-name-version.outputs.recipe_name }}"
-          RECIPE_VERSION="${{ steps.extract-name-version.outputs.recipe_version }}" # Version from the directory
+          RECIPE_VERSION_FROM_PATH="${{ steps.extract-name-version.outputs.recipe_version }}"
           
-          # Use the version from the label for the tag, which should match RECIPE_VERSION
-          # Read the version from the label from the extracted JSON
           METADATA_JSON='${{ steps.metadata.outputs.metadata_json }}'
-          LABEL_VERSION=$(echo "$METADATA_JSON" | jq -r '."org.yourproject.recipe.version"') # Adapt the prefix
+          # Ensure your metadata script outputs this label key correctly
+          # Also, ensure your Dockerfile labels use this exact key (e.g., org.escape-registry.recipe.version)
+          LABEL_VERSION=$(echo "$METADATA_JSON" | jq -r '.["org.escape-registry.recipe.version"] // .["org.yourproject.recipe.version"]') # Adapt if your prefix changed
 
-          if [ "$LABEL_VERSION" != "$RECIPE_VERSION" ]; then
-            echo "::error::The label version ($LABEL_VERSION) does not match the directory version ($RECIPE_VERSION) for $RECIPE_NAME."
+          if [ -z "$LABEL_VERSION" ] || [ "$LABEL_VERSION" == "null" ]; then
+            echo "::error::Could not extract 'org.escape-registry.recipe.version' or 'org.yourproject.recipe.version' from metadata JSON."
+            echo "Metadata JSON: $METADATA_JSON"
             exit 1
           fi
 
-          IMAGE_NAME="ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/$RECIPE_NAME"
-          # Tags: version and latest (for the most recent version of this recipe)
-          # You might want a more complex tagging strategy for 'latest'
-          TAG_VERSION="$IMAGE_NAME:$LABEL_VERSION"
-          TAG_LATEST="$IMAGE_NAME:latest" # Warning: 'latest' will be overwritten by the last recipe built with this name
-                                        # Consider a 'latest' strategy per recipe or a different convention.
-                                        # For now, we tag the specific version and 'latest' for this version.
-          TAG_SHA="$IMAGE_NAME:sha-${GITHUB_SHA::7}"
+          # It's good practice to ensure directory version matches label version
+          if [ "$LABEL_VERSION" != "$RECIPE_VERSION_FROM_PATH" ]; then
+            echo "::warning::Label version ($LABEL_VERSION) does not match directory version ($RECIPE_VERSION_FROM_PATH) for $RECIPE_NAME. Using label version for tagging."
+            # Decide if this should be an error: exit 1
+          fi
 
-          echo "Building image $RECIPE_NAME version $LABEL_VERSION with Dockerfile $DOCKERFILE_PATH"
-          echo "Tags: $TAG_VERSION, $TAG_LATEST, $TAG_SHA"
+          IMAGE_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_REPO_NAME=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_RECIPE_NAME=$(echo "$RECIPE_NAME" | tr '[:upper:]' '[:lower:]')
 
-          # Handling build arguments
-          BUILD_ARGS_JSON=$(echo "$METADATA_JSON" | jq -r '."org.yourproject.recipe.build_arguments" // ""') # Adapt the prefix
+          IMAGE_NAME_BASE="ghcr.io/$IMAGE_OWNER/$IMAGE_REPO_NAME/$IMAGE_RECIPE_NAME"
+          
+          TAG_VERSION="$IMAGE_NAME_BASE:$LABEL_VERSION"
+          # A common strategy for 'latest' is to tag the highest semantic version.
+          # For simplicity here, 'latest' will point to this specific build if it's on main.
+          # More complex 'latest' handling might involve comparing versions.
+          TAG_LATEST="$IMAGE_NAME_BASE:latest" 
+          TAG_SHA="$IMAGE_NAME_BASE:sha-${GITHUB_SHA::7}"
+
+          echo "Building image $IMAGE_RECIPE_NAME version $LABEL_VERSION with Dockerfile $DOCKERFILE_PATH"
+          echo "Tags to be applied: $TAG_VERSION, $TAG_LATEST (if main branch), $TAG_SHA"
+
+          BUILD_ARGS_JSON=$(echo "$METADATA_JSON" | jq -r '.["org.escape-registry.recipe.build_arguments"] // .["org.yourproject.recipe.build_arguments"] // ""') # Adapt prefix
           BUILD_ARGS_STRING=""
-          if [[ -n "$BUILD_ARGS_JSON" && "$BUILD_ARGS_JSON" != "null" ]]; then
+          if [[ -n "$BUILD_ARGS_JSON" && "$BUILD_ARGS_JSON" != "null" && "$BUILD_ARGS_JSON" != "" ]]; then
             echo "Build arguments detected: $BUILD_ARGS_JSON"
-            BUILD_ARGS_STRING=$(echo "$BUILD_ARGS_JSON" | jq -r 'to_entries | .[] | "--build-arg \(.key)=\(.value)"' | tr '\n' ' ')
+            BUILD_ARGS_STRING=$(echo "$BUILD_ARGS_JSON" | jq -r 'to_entries | .[] | "--build-arg \(.key)=\"\(.value)\""' | tr '\n' ' ')
             echo "Build arguments string: $BUILD_ARGS_STRING"
           fi
           
-          # The build context is the version directory (containing the Dockerfile)
-          docker build -t "$TAG_VERSION" -t "$TAG_LATEST" -t "$TAG_SHA" $BUILD_ARGS_STRING -f "$DOCKERFILE_PATH" "$(dirname "$DOCKERFILE_PATH")"
+          BUILD_CONTEXT_DIR=$(dirname "$DOCKERFILE_PATH")
+          echo "Build context directory: $BUILD_CONTEXT_DIR"
+
+          docker buildx build --platform linux/amd64 -t "$TAG_VERSION" -t "$TAG_SHA" $BUILD_ARGS_STRING -f "$DOCKERFILE_PATH" "$BUILD_CONTEXT_DIR" --load
           
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+            docker tag "$TAG_VERSION" "$TAG_LATEST"
+          fi
+
           echo "image_tag_version=$TAG_VERSION" >> $GITHUB_OUTPUT
           echo "image_tag_latest=$TAG_LATEST" >> $GITHUB_OUTPUT
           echo "image_tag_sha=$TAG_SHA" >> $GITHUB_OUTPUT
@@ -217,14 +255,16 @@ jobs:
         run: |
           echo "Pushing image ${{ steps.build-image.outputs.image_tag_version }}"
           docker push "${{ steps.build-image.outputs.image_tag_version }}"
+          
           echo "Pushing image ${{ steps.build-image.outputs.image_tag_latest }}"
           docker push "${{ steps.build-image.outputs.image_tag_latest }}"
+          
           echo "Pushing image ${{ steps.build-image.outputs.image_tag_sha }}"
           docker push "${{ steps.build-image.outputs.image_tag_sha }}"
 
   update-github-pages-data:
-    needs: [build-and-validate-recipes, process-recipe] # Runs after all modified recipes have been processed
-    if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' # Only on successful push to main
+    needs: [process-recipe] # Runs after all modified recipes have been processed (or attempted)
+    if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -234,55 +274,51 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+      
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
 
       - name: Aggregate metadata from all Dockerfiles
         id: aggregate-metadata
         run: |
-          echo "Aggregating metadata from all Dockerfiles..."
-          output_json_file="docs/_data/environments.json" # Make sure this path is correct
-          mkdir -p "$(dirname "$output_json_file")" # Create the _data directory if it doesn't exist
+          echo "Aggregating metadata from all Dockerfiles for GitHub Pages..."
+          output_json_file="docs/_data/environments.json"
+          mkdir -p "$(dirname "$output_json_file")"
 
-          all_metadata=[]
-          dockerfiles=$(find environments -type f -name Dockerfile)
-          
-          if [ -z "$dockerfiles" ]; then
+          all_dockerfiles=$(find environments -type f -name Dockerfile)
+          json_entries=()
+
+          if [ -z "$all_dockerfiles" ]; then
             echo "No Dockerfiles found. Creating an empty environments.json file."
             echo "[]" > "$output_json_file"
           else
-            temp_dir=$(mktemp -d)
-            echo "$dockerfiles" | while IFS= read -r df_path; do
+            for df_path in $all_dockerfiles; do
               echo "Processing $df_path for aggregation..."
-              # Use the filename based on the path to avoid collisions
-              sanitized_path=$(echo "$df_path" | tr '/' '_')
-              # Execute the script and capture the JSON output
-              # The extract_metadata.py script prints JSON to stdout if there is no output path
+              # Assuming extract_metadata.py prints JSON to stdout if no output file is given
+              # AND it includes _recipe_name and _recipe_version_from_path
               metadata_entry_json=$(python scripts/extract_metadata.py "$df_path")
-              if [ $? -eq 0 ] && [ -n "$metadata_entry_json" ]; then
-                # Add the Dockerfile path and recipe/version name to the JSON
-                # The extract_metadata.py script already adds _recipe_name and _recipe_version_from_path
-                all_metadata+=("$metadata_entry_json")
+              if [ $? -eq 0 ] && [ -n "$metadata_entry_json" ] && [ "$metadata_entry_json" != "null" ]; then
+                json_entries+=("$metadata_entry_json")
               else
-                echo "::warning::Failed to extract metadata from $df_path or metadata is empty."
+                echo "::warning::Failed to extract metadata from $df_path or metadata was empty/null."
               fi
             done
             
-            # Combine all JSON into a single JSON array
-            printf -v joined_json '%s,' "${all_metadata[@]}"
-            echo "[${joined_json%,}]" > "$output_json_file" # Remove the trailing comma
+            # Combine all JSON objects into a single JSON array
+            # Using jq to build the array safely
+            printf '%s\n' "${json_entries[@]}" | jq -s '.' > "$output_json_file"
           fi
 
           echo "Aggregated metadata saved in $output_json_file"
-          cat "$output_json_file" # Display the content for debugging
+          echo "Content of $output_json_file:"
+          cat "$output_json_file"
           echo "aggregated_json_path=$output_json_file" >> $GITHUB_OUTPUT
 
       - name: Commit and push GitHub Pages data
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "docs: Update environment data for GitHub Pages"
-          branch: main # Or gh-pages if you serve from this branch
-          file_pattern: "docs/_data/environments.json" # Make sure this matches the output path
-          # If you serve GitHub Pages from the /docs directory on the main branch,
-          # you don't need to push to a separate gh-pages branch.
-          # If you use a gh-pages branch:
-          # push_options: '--force' # Be careful with force push
-          # repository: . # Push to the current repository
+          branch: main # Or your GitHub Pages branch if different
+          file_pattern: "docs/_data/environments.json"
+          # repository: . # Usually not needed
+          # push_options: '--force' # Use with caution

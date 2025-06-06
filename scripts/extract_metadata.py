@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 # Adapt this to your project's prefix if different
-PROJECT_LABEL_PREFIX = "org.yourproject.recipe."
+PROJECT_LABEL_PREFIX = "org.escape-registry.recipe."
 OCI_LABEL_PREFIX = "org.opencontainers.image."
 
 
