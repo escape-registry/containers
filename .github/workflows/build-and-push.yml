@@ -66,15 +66,14 @@ jobs:
             # Handle new branches or first pushes
             if [[ "$GITHUB_EVENT_BEFORE" == "0000000000000000000000000000000000000000" ]]; then
               echo "New branch or first push. Searching for all environment directories."
-              changed_directories=$(find environments -type d -maxdepth 2 | grep '^environments/[^/]*/[^/]*$') || true
+              changed_directories=$(find environments -type d -maxdepth 2 | grep '^environments/[^/]*/[^/]*$' || true)
             else
               # Check for modified directories
-              git fetch origin --unshallow || true
               changed_directories=$(git diff --name-only --diff-filter=AMR $GITHUB_EVENT_BEFORE $GITHUB_SHA | grep '^environments/' | awk -F'/' '{print $1"/"$2"/"$3}' | uniq) || true
             fi
           else
             echo "Unsupported event type. Searching for all environment directories."
-            changed_directories=$(find environments -type d -maxdepth 2 | grep '^environments/[^/]*/[^/]*$') || true
+            changed_directories=$(find environments -type d -maxdepth 2 | grep '^environments/[^/]*/[^/]*$' || true)
           fi
 
           if [[ -z "$changed_directories" ]]; then
