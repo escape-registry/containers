@@ -1,0 +1,15 @@
+[
+  {
+    "org.opencontainers.image.title": "Python 3.10 Data Science Environment",
+    "org.opencontainers.image.description": "A Docker environment pre-configured with Python 3.10, Jupyter Lab, Pandas, NumPy, Scikit-learn, and Matplotlib for data science workflows.",
+    "org.opencontainers.image.url": "https://github.com/escape-registry/containers/tree/main/environments/python-datascience/1.0.0",
+    "org.escape-registry.recipe.author": "Thomas Vuillaume (vuillaut)",
+    "org.escape-registry.recipe.version": "1.0.0",
+    "org.escape-registry.recipe.keywords": "python,datascience,jupyter,pandas,numpy,scikit-learn",
+    "org.opencontainers.image.source": "https://github.com/escape-registry/containers",
+    "org.opencontainers.image.licenses": "MIT",
+    "org.escape-registry.recipe.documentation": "https://github.com/escape-registry/containers/blob/main/environments/python-datascience/README.md",
+    "_recipe_name": "python-datascience",
+    "_recipe_version_from_path": "1.0.0"
+  }
+]
