@@ -58,6 +58,7 @@ def extract_dockerfile_labels(dockerfile_path):
 def validate_metadata(metadata, dockerfile_path):
     """
     Validates the extracted metadata against requirements.
+    Returns a list of error messages.
     """
     required_labels = [
         f"{OCI_LABEL_PREFIX}title",
@@ -139,11 +140,7 @@ def validate_metadata(metadata, dockerfile_path):
                     f"Make sure it points to the correct version directory in the repository."
                 )
 
-    if errors:
-        error_message = f"Metadata validation errors for {dockerfile_path}:\n" + "\n".join(f"- {e}" for e in errors)
-        raise ValueError(error_message)
-
-    return True
+    return errors
 
 
 def get_recipe_name_and_version(dockerfile_path_str):
