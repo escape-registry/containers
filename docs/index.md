@@ -15,47 +15,51 @@ Welcome to the catalogue of available Docker container environments. Each enviro
 {% if site.data.environments and site.data.environments.size > 0 %}
   {% assign sorted_environments = site.data.environments | sort: "org.opencontainers.image.title" %}
   {% assign grouped_environments = sorted_environments | group_by: "_recipe_name" %}
-  {% for group in grouped_environments %}
-    <h2>{{ group.name }}</h2>
-    {% assign versions = group.items | sort: "org.yourproject.recipe.version" | reverse %}
-    <ul>
-      {% for recipe in versions %}
-      <li>
-        <h3>
-          {{ recipe['org.opencontainers.image.title'] | default: "Untitled" }}
-          (Version: {{ recipe['org.yourproject.recipe.version'] | default: "Unknown" }})
-        </h3>
-        <p><strong>Description:</strong> {{ recipe['org.opencontainers.image.description'] | default: "No description provided." }}</p>
-        <p><strong>Author:</strong> {{ recipe['org.yourproject.recipe.author'] | default: "N/A" }}</p>
-        <p><strong>Keywords:</strong> 
-          {% if recipe['org.yourproject.recipe.keywords'] %}
-            {% assign keywords = recipe['org.yourproject.recipe.keywords'] | split: ',' %}
-            {% for keyword in keywords %}
-              <span class="keyword">{{ keyword | strip }}</span>
-            {% endfor %}
-          {% else %}
-            N/A
-          {% endif %}
-        </p>
-        <p>
-          <a href="{{ recipe['org.opencontainers.image.url'] }}" target="_blank" rel="noopener noreferrer">View Dockerfile on GitHub</a>
-          {% if recipe['org.yourproject.recipe.documentation'] and recipe['org.yourproject.recipe.documentation'] != "" %}
-            | <a href="{{ recipe['org.yourproject.recipe.documentation'] }}" target="_blank" rel="noopener noreferrer">Recipe README</a>
-          {% endif %}
-        </p>
-        <p><strong>Registry Image (Example):</strong> 
-          `ghcr.io/{{ site.github.repository_owner | default: 'your-org' }}/{{ site.github.repository_name | default: 'your-repo' }}/{{ recipe['_recipe_name'] }}:{{ recipe['org.yourproject.recipe.version'] | default: 'latest' }}`
-        </p>
-        {% if recipe['org.yourproject.recipe.exposed_ports'] and recipe['org.yourproject.recipe.exposed_ports'] != "" %}
-          <p><strong>Exposed Ports:</strong> {{ recipe['org.yourproject.recipe.exposed_ports'] }}</p>
-        {% endif %}
-        {% if recipe['org.yourproject.recipe.build_arguments'] and recipe['org.yourproject.recipe.build_arguments'] != "" %}
-          <p><strong>Default Build Arguments:</strong> <code>{{ recipe['org.yourproject.recipe.build_arguments'] }}</code></p>
-        {% endif %}
-      </li>
+  {% if grouped_environments %}
+    {% for group in grouped_environments %}
+      <h2>{{ group.name }}</h2>
+      {% assign versions = group.items | sort: "org.yourproject.recipe.version" | reverse %}
+      <ul>
+        {% for recipe in versions %}
+          <li>
+            <h3>
+              {{ recipe['org.opencontainers.image.title'] | default: "Untitled" }}
+              (Version: {{ recipe['org.yourproject.recipe.version'] | default: "Unknown" }})
+            </h3>
+            <p><strong>Description:</strong> {{ recipe['org.opencontainers.image.description'] | default: "No description provided." }}</p>
+            <p><strong>Author:</strong> {{ recipe['org.yourproject.recipe.author'] | default: "N/A" }}</p>
+            <p><strong>Keywords:</strong> 
+              {% if recipe['org.yourproject.recipe.keywords'] %}
+                {% assign keywords = recipe['org.yourproject.recipe.keywords'] | split: ',' %}
+                {% for keyword in keywords %}
+                  <span class="keyword">{{ keyword | strip }}</span>
+                {% endfor %}
+              {% else %}
+                N/A
+              {% endif %}
+            </p>
+            <p>
+              <a href="{{ recipe['org.opencontainers.image.url'] }}" target="_blank" rel="noopener noreferrer">View Dockerfile on GitHub</a>
+              {% if recipe['org.yourproject.recipe.documentation'] and recipe['org.yourproject.recipe.documentation'] != "" %}
+                | <a href="{{ recipe['org.yourproject.recipe.documentation'] }}" target="_blank" rel="noopener noreferrer">Recipe README</a>
+              {% endif %}
+            </p>
+            <p><strong>Registry Image (Example):</strong> 
+              `ghcr.io/{{ site.github.repository_owner | default: 'your-org' }}/{{ site.github.repository_name | default: 'your-repo' }}/{{ recipe['_recipe_name'] }}:{{ recipe['org.yourproject.recipe.version'] | default: 'latest' }}`
+            </p>
+            {% if recipe['org.yourproject.recipe.exposed_ports'] and recipe['org.yourproject.recipe.exposed_ports'] != "" %}
+              <p><strong>Exposed Ports:</strong> {{ recipe['org.yourproject.recipe.exposed_ports'] }}</p>
+            {% endif %}
+            {% if recipe['org.yourproject.recipe.build_arguments'] and recipe['org.yourproject.recipe.build_arguments'] != "" %}
+              <p><strong>Default Build Arguments:</strong> <code>{{ recipe['org.yourproject.recipe.build_arguments'] }}</code></p>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
     {% endfor %}
-  </ul>
-{% endfor %}
+  {% else %}
+    <p>No environments found. The `docs/_data/environments.json` file might be empty or missing. It is generated automatically by the CI/CD pipeline.</p>
+  {% endif %}
 {% else %}
   <p>No environments found. The `docs/_data/environments.json` file might be empty or missing. It is generated automatically by the CI/CD pipeline.</p>
 {% endif %}
