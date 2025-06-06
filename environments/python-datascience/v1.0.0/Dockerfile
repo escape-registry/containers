@@ -26,6 +26,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
     && pip install jupyterlab==${JUPYTER_LAB_VERSION}
 
+    
 # Expose the default Jupyter Lab port
 EXPOSE 8888
 

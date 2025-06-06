@@ -1,0 +1,5 @@
+pandas
+numpy
+scikit-learn
+matplotlib
+jupyterlab==4.1 # Ou la version que vous souhaitez

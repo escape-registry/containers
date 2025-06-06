@@ -5,13 +5,13 @@ on:
     branches:
       - main
     paths:
-      - 'environments/**/Dockerfile'
+      - 'environments/**/**' 
       - '.github/workflows/build-and-push.yml'
   pull_request:
     branches:
       - main
     paths:
-      - 'environments/**/Dockerfile'
+      - 'environments/**/**'
       - '.github/workflows/build-and-push.yml'
 
 permissions:
@@ -54,12 +54,13 @@ jobs:
           echo "GITHUB_BASE_REF: $GITHUB_BASE_REF"
           echo "GITHUB_HEAD_REF: $GITHUB_HEAD_REF"
 
-          changed_files=""
+          changed_directories=""
           if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
             # For PRs, compare with the target branch (usually main)
             # Make sure the base branch is correctly retrieved
             git fetch origin ${{ github.base_ref }}:${{ github.base_ref }} --depth=1
-            changed_files=$(git diff --name-only --diff-filter=AMR ${{ github.base_ref }} ${{ github.sha }} | grep '^environments/.*/.*/Dockerfile$' || true)
+            # Get the list of directories that contain modified files
+            changed_directories=$(git diff --name-only --diff-filter=AMR ${{ github.base_ref }} ${{ github.sha }} | sed -n 's|^environments/\([^/]*\)/\([^/]*\)/.*|\environments/\1/\2|p' | uniq || true)
           elif [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/main" ]]; then
             # For pushes to main, get the files modified in the push
             # If it's the first push or if the history is shallow, this might not be ideal.
@@ -67,41 +68,39 @@ jobs:
             # For now, we use the files modified in the push.
             # If GITHUB_BEFORE is 0000...0000 (new branch), build everything.
             if [[ "${{ github.event.before }}" == "0000000000000000000000000000000000000000" ]]; then
-                echo "New branch or first push, searching for all Dockerfiles."
-                changed_files=$(find environments -type f -name Dockerfile)
+                echo "New branch or first push, searching for all environment directories."
+                changed_directories=$(find environments -type d -maxdepth 2 | grep '^environments/[^/]*/[^/]*$' || true)
             else
-                changed_files=$(git diff --name-only --diff-filter=AMR ${{ github.event.before }} ${{ github.sha }} | grep '^environments/.*/.*/Dockerfile$' || true)
+                # Get the list of directories that contain modified files
+                changed_directories=$(git diff --name-only --diff-filter=AMR ${{ github.event.before }} ${{ github.sha }} | sed -n 's|^environments/\([^/]*\)/\([^/]*\)/.*|\environments/\1/\2|p' | uniq || true)
             fi
           else
-            echo "Unsupported event for specific change identification. Searching for all Dockerfiles."
-            changed_files=$(find environments -type f -name Dockerfile)
+            echo "Unsupported event for specific change identification. Searching for all environment directories."
+            changed_directories=$(find environments -type d -maxdepth 2 | grep '^environments/[^/]*/[^/]*$' || true)
           fi
 
-          if [[ -z "$changed_files" ]]; then
-            echo "No modified Dockerfiles found."
+          if [[ -z "$changed_directories" ]]; then
+            echo "No modified environment directories found."
             echo "changed_recipes_json=[]" >> $GITHUB_OUTPUT
             exit 0 # Successful exit if no files are modified
           fi
 
-          echo "Modified Dockerfiles:"
-          echo "$changed_files"
+          echo "Modified environment directories:"
+          echo "$changed_directories"
           
-          # Convert the list of files into a JSON array for the strategy matrix
-          # Each element will be the path of the directory containing the Dockerfile
+          # Convert the list of directories into a JSON array for the strategy matrix
           json_array="["
           first=true
-          # Use a different approach to iterate over the files
-          IFS=$'\n' read -r -d '' -a files <<< "$changed_files"
-          for file in "${files[@]}"; do
-            if [ -n "$file" ]; then # Ignore empty lines
+          # Use a different approach to iterate over the directories
+          IFS=$'\n' read -r -d '' -a directories <<< "$changed_directories"
+          for directory in "${directories[@]}"; do
+            if [ -n "$directory" ]; then # Ignore empty lines
               if [ "$first" = true ]; then
                 first=false
               else
-                json_array="$json_array,"
+                  json_array="$json_array,"
               fi
-              # Get the parent directory of the Dockerfile (i.e., the version directory)
-              recipe_dir=$(dirname "$file")
-              json_array="$json_array\"$recipe_dir\""
+              json_array="$json_array\"$directory\""
             fi
           done
           json_array="$json_array]"
@@ -152,7 +151,7 @@ jobs:
           recipe_name=$(basename "$recipe_name_dir")
           echo "recipe_name=$recipe_name" >> $GITHUB_OUTPUT
           echo "recipe_version=$recipe_version_dir_name" >> $GITHUB_OUTPUT
-          echo "dockerfile_path=${{ matrix.recipe_path }}/Dockerfile" >> $GITHUB_OUTPUT
+          echo "dockerfile_path=${{ matrix.recipe_path }}/Dockerfile" >> $GITHUB_OUTPUT 
           echo "Recipe Name: $recipe_name, Version: $recipe_version_dir_name, Dockerfile: ${{ matrix.recipe_path }}/Dockerfile"
 
       - name: Lint Dockerfile
