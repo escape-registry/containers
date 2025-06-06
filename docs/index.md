@@ -14,9 +14,10 @@ Welcome to the catalogue of available Docker container environments. Each enviro
 <div id="environmentsList">
 {% if site.data.environments and site.data.environments.size > 0 %}
   {% assign sorted_environments = site.data.environments | sort: "org.opencontainers.image.title" %}
-  {% for recipe_collection in sorted_environments group_by: "_recipe_name" %}
-    <h2>{{ recipe_collection.name }}</h2>
-    {% assign versions = recipe_collection.items | sort: "org.yourproject.recipe.version" | reverse %}
+  {% assign grouped_environments = sorted_environments | group_by: "_recipe_name" %}
+  {% for group in grouped_environments %}
+    <h2>{{ group.name }}</h2>
+    {% assign versions = group.items | sort: "org.yourproject.recipe.version" | reverse %}
     <ul>
       {% for recipe in versions %}
       <li>
@@ -43,21 +44,18 @@ Welcome to the catalogue of available Docker container environments. Each enviro
           {% endif %}
         </p>
         <p><strong>Registry Image (Example):</strong> 
-            `ghcr.io/{{ site.github.repository_owner | default: 'your-org' }}/{{ site.github.repository_name | default: 'your-repo' }}/{{ recipe['_recipe_name'] }}:{{ recipe['org.yourproject.recipe.version'] }}`
-            <br>
-            `ghcr.io/{{ site.github.repository_owner | default: 'your-org' }}/{{ site.github.repository_name | default: 'your-repo' }}/{{ recipe['_recipe_name'] }}:latest` (points to the latest version processed for this recipe name)
-
+          `ghcr.io/{{ site.github.repository_owner | default: 'your-org' }}/{{ site.github.repository_name | default: 'your-repo' }}/{{ recipe['_recipe_name'] }}:{{ recipe['org.yourproject.recipe.version'] | default: 'latest' }}`
         </p>
         {% if recipe['org.yourproject.recipe.exposed_ports'] and recipe['org.yourproject.recipe.exposed_ports'] != "" %}
-        <p><strong>Exposed Ports:</strong> {{ recipe['org.yourproject.recipe.exposed_ports'] }}</p>
+          <p><strong>Exposed Ports:</strong> {{ recipe['org.yourproject.recipe.exposed_ports'] }}</p>
         {% endif %}
         {% if recipe['org.yourproject.recipe.build_arguments'] and recipe['org.yourproject.recipe.build_arguments'] != "" %}
-        <p><strong>Default Build Arguments:</strong> <code>{{ recipe['org.yourproject.recipe.build_arguments'] }}</code></p>
+          <p><strong>Default Build Arguments:</strong> <code>{{ recipe['org.yourproject.recipe.build_arguments'] }}</code></p>
         {% endif %}
       </li>
-      {% endfor %}
-    </ul>
-  {% endfor %}
+    {% endfor %}
+  </ul>
+{% endfor %}
 {% else %}
   <p>No environments found. The `docs/_data/environments.json` file might be empty or missing. It is generated automatically by the CI/CD pipeline.</p>
 {% endif %}
