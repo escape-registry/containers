@@ -44,7 +44,7 @@ jobs:
           sudo wget -O /usr/local/bin/hadolint https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64
           sudo chmod +x /usr/local/bin/hadolint
 
-      - name: Identify changed recipes
+      - name: Identify changed recipes (for PRs and main push)
         id: identify-changes
         run: |
           set -e # Exit immediately if a command fails, but be mindful of commands that can "fail" meaningfully (like grep not finding matches)
@@ -109,6 +109,8 @@ jobs:
           json_array=$(echo "$changed_recipe_dirs_string" | jq --raw-input --slurp 'split("\n") | map(select(length > 0))')
           
           echo "Final JSON array of recipe paths: $json_array"
+          # Remove leading/trailing whitespace from the JSON array string
+          json_array=$(echo "$json_array" | tr -d '[:space:]')
           echo "changed_recipes_json=$json_array" >> $GITHUB_OUTPUT
 
   process-recipe:
