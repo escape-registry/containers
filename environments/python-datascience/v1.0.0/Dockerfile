@@ -12,8 +12,6 @@ LABEL org.escape-registry.recipe.keywords="python,datascience,jupyter,pandas,num
 # Optional Metadata Labels
 LABEL org.opencontainers.image.source="https://github.com/escape-registry/containers"
 LABEL org.opencontainers.image.licenses="MIT"
-LABEL org.escape-registry.recipe.build_arguments='{"JUPYTER_LAB_VERSION": "4.1"}'
-LABEL org.escape-registry.recipe.exposed_ports="8888"
 LABEL org.escape-registry.recipe.documentation="https://github.com/escape-registry/containers/blob/main/environments/python-datascience/README.md"
 
 ENV PYTHONDONTWRITEBYTECODE 1
@@ -24,9 +22,9 @@ WORKDIR /app
 COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install jupyterlab=="${JUPYTER_LAB_VERSION}"
+    && pip install --no-cache-dir jupyterlab=="${JUPYTER_LAB_VERSION}"
 
-    
+
 # Expose the default Jupyter Lab port
 EXPOSE 8888
 
