@@ -1,0 +1,8 @@
+theme: minima
+title: Docker Recipes Catalogue
+description: "A centralized collection of Docker container recipes."
+
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  

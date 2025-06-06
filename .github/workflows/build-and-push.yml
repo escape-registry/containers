@@ -1,0 +1,309 @@
+name: Build, Validate, and Push Docker Recipes
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'environments/**/Dockerfile'
+      - '.github/workflows/build-and-push.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'environments/**/Dockerfile'
+      - '.github/workflows/build-and-push.yml'
+
+permissions:
+  contents: read
+  packages: write # Required to push to GHCR
+  pull-requests: write # Required to comment on PRs (optional)
+
+jobs:
+  build-and-validate-recipes:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false # Continue other builds even if one fails (for PRs)
+      matrix:
+        recipe_path: [] # Will be filled dynamically
+
+    outputs:
+      changed_recipes_json: ${{ steps.identify-changes.outputs.changed_recipes_json }}
+      all_recipes_json: ${{ steps.list-all-recipes.outputs.all_recipes_json }} # For updating pages
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Required for git diff
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10' # Or the version you prefer for the script
+
+      - name: Install Dockerfile Linter (hadolint)
+        run: |
+          sudo wget -O /usr/local/bin/hadolint https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64
+          sudo chmod +x /usr/local/bin/hadolint
+        # You can replace with dockerfilelint if you prefer:
+        # run: pip install dockerfilelint
+
+      - name: Identify changed recipes (for PRs and main push)
+        id: identify-changes
+        run: |
+          set -e # Exit immediately if a command fails
+          echo "GITHUB_EVENT_NAME: $GITHUB_EVENT_NAME"
+          echo "GITHUB_BASE_REF: $GITHUB_BASE_REF"
+          echo "GITHUB_HEAD_REF: $GITHUB_HEAD_REF"
+
+          changed_files=""
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            # For PRs, compare with the target branch (usually main)
+            # Make sure the base branch is correctly retrieved
+            git fetch origin ${{ github.base_ref }}:${{ github.base_ref }} --depth=1
+            changed_files=$(git diff --name-only --diff-filter=AMR ${{ github.base_ref }} ${{ github.sha }} | grep '^environments/.*/.*/Dockerfile$' || true)
+          elif [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/main" ]]; then
+            # For pushes to main, get the files modified in the push
+            # If it's the first push or if the history is shallow, this might not be ideal.
+            # An alternative is to rebuild everything on main, or compare with the last successful commit.
+            # For now, we use the files modified in the push.
+            # If GITHUB_BEFORE is 0000...0000 (new branch), build everything.
+            if [[ "${{ github.event.before }}" == "0000000000000000000000000000000000000000" ]]; then
+                echo "New branch or first push, searching for all Dockerfiles."
+                changed_files=$(find environments -type f -name Dockerfile)
+            else
+                changed_files=$(git diff --name-only --diff-filter=AMR ${{ github.event.before }} ${{ github.sha }} | grep '^environments/.*/.*/Dockerfile$' || true)
+            fi
+          else
+            echo "Unsupported event for specific change identification. Searching for all Dockerfiles."
+            changed_files=$(find environments -type f -name Dockerfile)
+          fi
+
+          if [[ -z "$changed_files" ]]; then
+            echo "No modified Dockerfiles found."
+            echo "changed_recipes_json=[]" >> $GITHUB_OUTPUT
+            exit 0 # Successful exit if no files are modified
+          fi
+
+          echo "Modified Dockerfiles:"
+          echo "$changed_files"
+          
+          # Convert the list of files into a JSON array for the strategy matrix
+          # Each element will be the path of the directory containing the Dockerfile
+          json_array="["
+          first=true
+          echo "$changed_files" | while IFS= read -r line; do
+            if [ "$first" = true ]; then
+              first=false
+            else
+              json_array="$json_array,"
+            fi
+            # Get the parent directory of the Dockerfile (i.e., the version directory)
+            recipe_dir=$(dirname "$line")
+            json_array="$json_array\"$recipe_dir\""
+          done
+          json_array="$json_array]"
+          
+          echo "JSON array of modified recipes: $json_array"
+          echo "changed_recipes_json=$json_array" >> $GITHUB_OUTPUT
+
+
+      - name: Dynamically set matrix for changed recipes
+        if: steps.identify-changes.outputs.changed_recipes_json != '[]' && steps.identify-changes.outputs.changed_recipes_json != ''
+        run: |
+          echo "matrix_recipes=${{ steps.identify-changes.outputs.changed_recipes_json }}" >> $GITHUB_ENV
+
+    # This job will run for each modified recipe
+    # It is separated to allow parallelization and better logging per recipe
+  process-recipe:
+    needs: build-and-validate-recipes # Ensure that change identification is complete
+    if: needs.build-and-validate-recipes.outputs.changed_recipes_json != '[]' && needs.build-and-validate-recipes.outputs.changed_recipes_json != ''
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        recipe_path: ${{ fromJson(needs.build-and-validate-recipes.outputs.changed_recipes_json) }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dockerfile Linter (hadolint)
+        run: |
+          sudo wget -O /usr/local/bin/hadolint https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64
+          sudo chmod +x /usr/local/bin/hadolint
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract Recipe Name and Version from Path
+        id: extract-name-version
+        run: |
+          recipe_full_path="${{ matrix.recipe_path }}" # ex: environments/recipe-name/version
+          recipe_version_dir_name=$(basename "$recipe_full_path")
+          recipe_name_dir=$(dirname "$recipe_full_path")
+          recipe_name=$(basename "$recipe_name_dir")
+          echo "recipe_name=$recipe_name" >> $GITHUB_OUTPUT
+          echo "recipe_version=$recipe_version_dir_name" >> $GITHUB_OUTPUT
+          echo "dockerfile_path=${{ matrix.recipe_path }}/Dockerfile" >> $GITHUB_OUTPUT
+          echo "Recipe Name: $recipe_name, Version: $recipe_version_dir_name, Dockerfile: ${{ matrix.recipe_path }}/Dockerfile"
+
+      - name: Lint Dockerfile
+        run: |
+          echo "Linting Dockerfile: ${{ steps.extract-name-version.outputs.dockerfile_path }}"
+          hadolint "${{ steps.extract-name-version.outputs.dockerfile_path }}"
+        # Or for dockerfilelint:
+        # dockerfilelint --dockerfile "${{ steps.extract-name-version.outputs.dockerfile_path }}" --json --verbose
+
+      - name: Extract and Validate Metadata
+        id: metadata
+        run: |
+          echo "Extracting and validating metadata for ${{ steps.extract-name-version.outputs.dockerfile_path }}"
+          # Create a temporary directory for the JSON output if needed
+          mkdir -p temp_metadata
+          python scripts/extract_metadata.py "${{ steps.extract-name-version.outputs.dockerfile_path }}" "temp_metadata/${{ steps.extract-name-version.outputs.recipe_name }}-${{ steps.extract-name-version.outputs.recipe_version }}.json"
+          # Expose the JSON content as output for later use if needed
+          # For now, the script will fail if validation fails.
+          # You might want to capture the JSON here to use in build steps.
+          # For example, to read build-args.
+          metadata_json_content=$(cat "temp_metadata/${{ steps.extract-name-version.outputs.recipe_name }}-${{ steps.extract-name-version.outputs.recipe_version }}.json")
+          echo "metadata_json<<EOF" >> $GITHUB_OUTPUT
+          echo "$metadata_json_content" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+
+      - name: Login to GitHub Container Registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Docker Image
+        id: build-image
+        # Always build for PRs (to verify that it builds) and for pushes to main
+        # The push will only happen for main
+        run: |
+          DOCKERFILE_PATH="${{ steps.extract-name-version.outputs.dockerfile_path }}"
+          RECIPE_NAME="${{ steps.extract-name-version.outputs.recipe_name }}"
+          RECIPE_VERSION="${{ steps.extract-name-version.outputs.recipe_version }}" # Version from the directory
+          
+          # Use the version from the label for the tag, which should match RECIPE_VERSION
+          # Read the version from the label from the extracted JSON
+          METADATA_JSON='${{ steps.metadata.outputs.metadata_json }}'
+          LABEL_VERSION=$(echo "$METADATA_JSON" | jq -r '."org.yourproject.recipe.version"') # Adapt the prefix
+
+          if [ "$LABEL_VERSION" != "$RECIPE_VERSION" ]; then
+            echo "::error::The label version ($LABEL_VERSION) does not match the directory version ($RECIPE_VERSION) for $RECIPE_NAME."
+            exit 1
+          fi
+
+          IMAGE_NAME="ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/$RECIPE_NAME"
+          # Tags: version and latest (for the most recent version of this recipe)
+          # You might want a more complex tagging strategy for 'latest'
+          TAG_VERSION="$IMAGE_NAME:$LABEL_VERSION"
+          TAG_LATEST="$IMAGE_NAME:latest" # Warning: 'latest' will be overwritten by the last recipe built with this name
+                                        # Consider a 'latest' strategy per recipe or a different convention.
+                                        # For now, we tag the specific version and 'latest' for this version.
+          TAG_SHA="$IMAGE_NAME:sha-${GITHUB_SHA::7}"
+
+          echo "Building image $RECIPE_NAME version $LABEL_VERSION with Dockerfile $DOCKERFILE_PATH"
+          echo "Tags: $TAG_VERSION, $TAG_LATEST, $TAG_SHA"
+
+          # Handling build arguments
+          BUILD_ARGS_JSON=$(echo "$METADATA_JSON" | jq -r '."org.yourproject.recipe.build_arguments" // ""') # Adapt the prefix
+          BUILD_ARGS_STRING=""
+          if [[ -n "$BUILD_ARGS_JSON" && "$BUILD_ARGS_JSON" != "null" ]]; then
+            echo "Build arguments detected: $BUILD_ARGS_JSON"
+            BUILD_ARGS_STRING=$(echo "$BUILD_ARGS_JSON" | jq -r 'to_entries | .[] | "--build-arg \(.key)=\(.value)"' | tr '\n' ' ')
+            echo "Build arguments string: $BUILD_ARGS_STRING"
+          fi
+          
+          # The build context is the version directory (containing the Dockerfile)
+          docker build -t "$TAG_VERSION" -t "$TAG_LATEST" -t "$TAG_SHA" $BUILD_ARGS_STRING -f "$DOCKERFILE_PATH" "$(dirname "$DOCKERFILE_PATH")"
+          
+          echo "image_tag_version=$TAG_VERSION" >> $GITHUB_OUTPUT
+          echo "image_tag_latest=$TAG_LATEST" >> $GITHUB_OUTPUT
+          echo "image_tag_sha=$TAG_SHA" >> $GITHUB_OUTPUT
+
+      - name: Push Docker Image to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          echo "Pushing image ${{ steps.build-image.outputs.image_tag_version }}"
+          docker push "${{ steps.build-image.outputs.image_tag_version }}"
+          echo "Pushing image ${{ steps.build-image.outputs.image_tag_latest }}"
+          docker push "${{ steps.build-image.outputs.image_tag_latest }}"
+          echo "Pushing image ${{ steps.build-image.outputs.image_tag_sha }}"
+          docker push "${{ steps.build-image.outputs.image_tag_sha }}"
+
+  update-github-pages-data:
+    needs: [build-and-validate-recipes, process-recipe] # Runs after all modified recipes have been processed
+    if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' # Only on successful push to main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Aggregate metadata from all Dockerfiles
+        id: aggregate-metadata
+        run: |
+          echo "Aggregating metadata from all Dockerfiles..."
+          output_json_file="docs/_data/environments.json" # Make sure this path is correct
+          mkdir -p "$(dirname "$output_json_file")" # Create the _data directory if it doesn't exist
+
+          all_metadata=[]
+          dockerfiles=$(find environments -type f -name Dockerfile)
+          
+          if [ -z "$dockerfiles" ]; then
+            echo "No Dockerfiles found. Creating an empty environments.json file."
+            echo "[]" > "$output_json_file"
+          else
+            temp_dir=$(mktemp -d)
+            echo "$dockerfiles" | while IFS= read -r df_path; do
+              echo "Processing $df_path for aggregation..."
+              # Use the filename based on the path to avoid collisions
+              sanitized_path=$(echo "$df_path" | tr '/' '_')
+              # Execute the script and capture the JSON output
+              # The extract_metadata.py script prints JSON to stdout if there is no output path
+              metadata_entry_json=$(python scripts/extract_metadata.py "$df_path")
+              if [ $? -eq 0 ] && [ -n "$metadata_entry_json" ]; then
+                # Add the Dockerfile path and recipe/version name to the JSON
+                # The extract_metadata.py script already adds _recipe_name and _recipe_version_from_path
+                all_metadata+=("$metadata_entry_json")
+              else
+                echo "::warning::Failed to extract metadata from $df_path or metadata is empty."
+              fi
+            done
+            
+            # Combine all JSON into a single JSON array
+            printf -v joined_json '%s,' "${all_metadata[@]}"
+            echo "[${joined_json%,}]" > "$output_json_file" # Remove the trailing comma
+          fi
+
+          echo "Aggregated metadata saved in $output_json_file"
+          cat "$output_json_file" # Display the content for debugging
+          echo "aggregated_json_path=$output_json_file" >> $GITHUB_OUTPUT
+
+      - name: Commit and push GitHub Pages data
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "docs: Update environment data for GitHub Pages"
+          branch: main # Or gh-pages if you serve from this branch
+          file_pattern: "docs/_data/environments.json" # Make sure this matches the output path
+          # If you serve GitHub Pages from the /docs directory on the main branch,
+          # you don't need to push to a separate gh-pages branch.
+          # If you use a gh-pages branch:
+          # push_options: '--force' # Be careful with force push
+          # repository: . # Push to the current repository
