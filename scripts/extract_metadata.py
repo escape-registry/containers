@@ -1,7 +1,7 @@
-import sys
 import os
 import re
 import json
+import sys
 from pathlib import Path
 
 # Adapt this to your project's prefix if different
@@ -146,41 +146,81 @@ def validate_metadata(metadata, dockerfile_path):
     return True
 
 
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python extract_metadata.py <path_to_dockerfile> [output_path_for_json]", file=sys.stderr)
-        sys.exit(1)
+def get_recipe_name_and_version(dockerfile_path_str):
+    """
+    Extracts the recipe name and version from the Dockerfile path.
+    Assumes path format: environments/<recipe_name>/<version>/Dockerfile
+    """
+    p = Path(dockerfile_path_str)
+    # p.parts for 'environments/recipe-name/version/Dockerfile' might be:
+    # ('environments', 'recipe-name', 'version', 'Dockerfile')
+    # or on Windows: ('environments', 'recipe-name', 'version', 'Dockerfile')
+    # We need to handle potential leading slashes or drive letters if the path is absolute
+    # by finding the 'environments' part.
 
-    dockerfile_path_arg = sys.argv[1]
-
+    parts = list(p.parts)
     try:
-        print(f"Processing Dockerfile: {dockerfile_path_arg}", file=sys.stderr)
-        extracted_data = extract_dockerfile_labels(dockerfile_path_arg)
-        if not extracted_data:
-            print(f"No LABEL metadata found in {dockerfile_path_arg}", file=sys.stderr)
-            # Decide whether to exit with an error if no labels are found,
-            # or if it's acceptable and validation will fail anyway.
-            # For now, we let validation handle this.
+        environments_index = parts.index("environments")
+        # Recipe name is the part after 'environments'
+        recipe_name = parts[environments_index + 1]
+        # Version is the part after recipe_name
+        version = parts[environments_index + 2]
+        return recipe_name, version
+    except (ValueError, IndexError):
+        # Handle cases where the path doesn't match the expected structure
+        print(f"Warning: Could not derive recipe name and version from path: {dockerfile_path_str}", file=sys.stderr)
+        return "unknown", "unknown"
 
-        validate_metadata(extracted_data, dockerfile_path_arg)
 
-        # Add additional information to the JSON if needed
-        p = Path(dockerfile_path_arg)
-        extracted_data["_metadata_source_path"] = str(p.relative_to(Path.cwd()))  # Relative path
-        extracted_data["_recipe_name"] = p.parent.parent.name
-        extracted_data["_recipe_version_from_path"] = p.parent.name
-
-        if len(sys.argv) > 2:
-            output_path = sys.argv[2]
-            with open(output_path, "w", encoding="utf-8") as out_f:
-                json.dump(extracted_data, out_f, indent=2, ensure_ascii=False)
-            print(f"Extracted metadata and saved to {output_path}", file=sys.stderr)
-        else:
-            print(json.dumps(extracted_data, indent=2, ensure_ascii=False))
-
-    except ValueError as ve:  # Specific validation errors
-        print(f"{ve}", file=sys.stderr)
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: extract_metadata.py <dockerfile_path> [output_json_path]", file=sys.stderr)
         sys.exit(1)
-    except Exception as e:
-        print(f"Error processing Dockerfile {dockerfile_path_arg}: {e}", file=sys.stderr)
-        sys.exit(2)  # Different exit code for general errors
+
+    dockerfile_path = sys.argv[1]
+    output_json_path = sys.argv[2] if len(sys.argv) > 2 else None
+
+    # Get the GitHub workspace directory from the environment
+    github_workspace = os.environ.get("GITHUB_WORKSPACE")
+    if not github_workspace:
+        print("Error: GITHUB_WORKSPACE environment variable not found.", file=sys.stderr)
+        sys.exit(1)
+
+    # Create an absolute path to the Dockerfile relative to the workspace
+    abs_dockerfile_path = os.path.join(github_workspace, dockerfile_path)
+
+    if not os.path.exists(abs_dockerfile_path):
+        print(f"Error: Dockerfile not found at {abs_dockerfile_path}", file=sys.stderr)
+        sys.exit(1)
+
+    # Extract metadata from the Dockerfile
+    metadata = extract_dockerfile_labels(abs_dockerfile_path)
+
+    # Validate the extracted metadata
+    errors = validate_metadata(metadata, abs_dockerfile_path)
+    if errors:
+        print("Metadata validation errors for {}:".format(dockerfile_path), file=sys.stderr)
+        for error in errors:
+            print("- " + error, file=sys.stderr)
+        sys.exit(1)
+
+    # Add recipe name and version to metadata
+    recipe_name, recipe_version_from_path = get_recipe_name_and_version(dockerfile_path)
+    metadata["_recipe_name"] = recipe_name
+    metadata["_recipe_version_from_path"] = recipe_version_from_path
+
+    # Output the metadata as JSON
+    if output_json_path:
+        try:
+            with open(output_json_path, "w", encoding="utf-8") as outfile:
+                json.dump(metadata, outfile, indent=2)
+            print("Metadata saved to {}".format(output_json_path))
+        except Exception as e:
+            print("Error writing to {}: {}".format(output_json_path, str(e)), file=sys.stderr)
+            sys.exit(1)
+    else:
+        json.dump(metadata, sys.stdout, indent=2)
+
+
+if __name__ == "__main__":
+    main()
