@@ -297,24 +297,34 @@ jobs:
           else
             for df_path in $all_dockerfiles; do
               echo "Processing $df_path for aggregation..."
-              # Assuming extract_metadata.py prints JSON to stdout if no output file is given
-              # AND it includes _recipe_name and _recipe_version_from_path
+              # Capture stdout and stderr separately if needed for debugging, but for now, just stdout
               metadata_entry_json=$(python scripts/extract_metadata.py "$df_path")
-              if [ $? -eq 0 ] && [ -n "$metadata_entry_json" ] && [ "$metadata_entry_json" != "null" ]; then
-                json_entries+=("$metadata_entry_json")
+              script_exit_code=$?
+
+              if [ $script_exit_code -eq 0 ]; then
+                  # Check if the output is a valid JSON object using jq
+                  if echo "$metadata_entry_json" | jq -e 'if type == "object" then . else error("not an object") end' > /dev/null 2>&1; then
+                      json_entries+=("$metadata_entry_json")
+                  else
+                      echo "::warning::Output from extract_metadata.py for $df_path was not a JSON object or was empty/invalid. Output: [$metadata_entry_json]"
+                  fi
               else
-                echo "::warning::Failed to extract metadata from $df_path or metadata was empty/null."
+                  echo "::warning::extract_metadata.py failed for $df_path (exit code $script_exit_code). Review script output/errors. Output: [$metadata_entry_json]"
               fi
             done
             
-            # Combine all JSON objects into a single JSON array
-            # Using jq to build the array safely
-            printf '%s\n' "${json_entries[@]}" | jq -s '.' > "$output_json_file"
+            if [ ${#json_entries[@]} -eq 0 ]; then
+              echo "No valid metadata entries were collected. Creating an empty environments.json file."
+              echo "[]" > "$output_json_file"
+            else
+              # Combine all valid JSON objects into a single JSON array
+              printf '%s\n' "${json_entries[@]}" | jq -s '.' > "$output_json_file"
+            fi
           fi
 
           echo "Aggregated metadata saved in $output_json_file"
-          echo "Content of $output_json_file:"
-          cat "$output_json_file"
+          echo "Content of $output_json_file (first 500 chars):"
+          head -c 500 "$output_json_file" && echo
           echo "aggregated_json_path=$output_json_file" >> $GITHUB_OUTPUT
 
       - name: Commit and push GitHub Pages data
