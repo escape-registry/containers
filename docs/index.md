@@ -21,8 +21,8 @@ Welcome to the catalogue of available Docker container environments. Each enviro
       {% for recipe in versions %}
       <li>
         <h3>
-          {{ recipe['org.opencontainers.image.title'] }}
-          (Version: {{ recipe['org.yourproject.recipe.version'] }})
+          {{ recipe['org.opencontainers.image.title'] | default: "Untitled" }}
+          (Version: {{ recipe['org.yourproject.recipe.version'] | default: "Unknown" }})
         </h3>
         <p><strong>Description:</strong> {{ recipe['org.opencontainers.image.description'] | default: "No description provided." }}</p>
         <p><strong>Author:</strong> {{ recipe['org.yourproject.recipe.author'] | default: "N/A" }}</p>
