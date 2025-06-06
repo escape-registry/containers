@@ -45,7 +45,7 @@ Welcome to the catalogue of available Docker container environments. Each enviro
               {% endif %}
             </p>
             <p><strong>Registry Image (Example):</strong> 
-              `ghcr.io/{{ site.github.repository_owner | default: 'your-org' }}/{{ site.github.repository_name | default: 'your-repo' }}/{{ recipe['_recipe_name'] }}:{{ recipe['org.escape-registry.recipe.version'] | default: 'latest' }}`
+              `ghcr.io/{{ site.github.repository_owner | default: 'your-org' }}/{{ site.github.repository_name | default: 'containers' }}/{{ recipe['_recipe_name'] }}:{{ recipe['org.escape-registry.recipe.version'] | default: 'latest' }}`
             </p>
             {% if recipe['org.escape-registry.recipe.exposed_ports'] and recipe['org.escape-registry.recipe.exposed_ports'] != "" %}
               <p><strong>Exposed Ports:</strong> {{ recipe['org.escape-registry.recipe.exposed_ports'] }}</p>

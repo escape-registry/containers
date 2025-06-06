@@ -206,6 +206,14 @@ def main():
     metadata["_recipe_name"] = recipe_name
     metadata["_recipe_version_from_path"] = recipe_version_from_path
 
+    # Ensure all required properties exist
+    if "org.opencontainers.image.title" not in metadata:
+        metadata["org.opencontainers.image.title"] = "Untitled"
+    if "_recipe_name" not in metadata:
+        metadata["_recipe_name"] = "unknown"
+    if "org.escape-registry.recipe.version" not in metadata:
+        metadata["org.escape-registry.recipe.version"] = "0.0.0"
+
     # Output the metadata as JSON
     if output_json_path:
         try:

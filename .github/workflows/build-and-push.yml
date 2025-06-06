@@ -16,7 +16,7 @@ on:
   workflow_dispatch: # manual trigger
 
 permissions:
-  contents: write
+  contents: write # Required to push changes to the repository
   packages: write # Required to push to GHCR
   pull-requests: write # Required to comment on PRs (optional)
 
@@ -321,7 +321,5 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "docs: Update environment data for GitHub Pages"
-          branch: main # Or your GitHub Pages branch if different
+          branch: main 
           file_pattern: "docs/_data/environments.json"
-          # repository: . # Usually not needed
-          # push_options: '--force' # Use with caution
