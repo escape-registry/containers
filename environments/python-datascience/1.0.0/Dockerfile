@@ -4,7 +4,7 @@ FROM python:3.10-slim-buster
 # Required Metadata Labels
 LABEL org.opencontainers.image.title="Python 3.10 Data Science Environment"
 LABEL org.opencontainers.image.description="A Docker environment pre-configured with Python 3.10, Jupyter Lab, Pandas, NumPy, Scikit-learn, and Matplotlib for data science workflows."
-LABEL org.opencontainers.image.url="https://github.com/escape-registry/containers/tree/main/environments/python-datascience"
+LABEL org.opencontainers.image.url="https://github.com/escape-registry/containers/tree/main/environments/python-datascience/1.0.0"
 LABEL org.escape-registry.recipe.author="Thomas Vuillaume (vuillaut)"
 LABEL org.escape-registry.recipe.version="1.0.0"
 LABEL org.escape-registry.recipe.keywords="python,datascience,jupyter,pandas,numpy,scikit-learn"
