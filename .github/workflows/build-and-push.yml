@@ -39,14 +39,12 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10' # Or the version you prefer for the script
+          python-version: '3.10'
 
       - name: Install Dockerfile Linter (hadolint)
         run: |
           sudo wget -O /usr/local/bin/hadolint https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64
           sudo chmod +x /usr/local/bin/hadolint
-        # You can replace with dockerfilelint if you prefer:
-        # run: pip install dockerfilelint
 
       - name: Identify changed recipes (for PRs and main push)
         id: identify-changes
@@ -92,15 +90,19 @@ jobs:
           # Each element will be the path of the directory containing the Dockerfile
           json_array="["
           first=true
-          echo "$changed_files" | while IFS= read -r line; do
-            if [ "$first" = true ]; then
-              first=false
-            else
-              json_array="$json_array,"
+          # Use a different approach to iterate over the files
+          IFS=$'\n' read -r -d '' -a files <<< "$changed_files"
+          for file in "${files[@]}"; do
+            if [ -n "$file" ]; then # Ignore empty lines
+              if [ "$first" = true ]; then
+                first=false
+              else
+                json_array="$json_array,"
+              fi
+              # Get the parent directory of the Dockerfile (i.e., the version directory)
+              recipe_dir=$(dirname "$file")
+              json_array="$json_array\"$recipe_dir\""
             fi
-            # Get the parent directory of the Dockerfile (i.e., the version directory)
-            recipe_dir=$(dirname "$line")
-            json_array="$json_array\"$recipe_dir\""
           done
           json_array="$json_array]"
           
@@ -157,8 +159,6 @@ jobs:
         run: |
           echo "Linting Dockerfile: ${{ steps.extract-name-version.outputs.dockerfile_path }}"
           hadolint "${{ steps.extract-name-version.outputs.dockerfile_path }}"
-        # Or for dockerfilelint:
-        # dockerfilelint --dockerfile "${{ steps.extract-name-version.outputs.dockerfile_path }}" --json --verbose
 
       - name: Extract and Validate Metadata
         id: metadata
